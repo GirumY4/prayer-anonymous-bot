@@ -6,7 +6,7 @@ export async function connectDatabase(uri: string): Promise<void> {
     await mongoose.connect(uri);
     logger.info({ event: 'database_connected' }, 'MongoDB connected successfully');
   } catch (error) {
-    logger.error({ event: 'database_connection_failed' }, 'Failed to connect to MongoDB');
+    logger.error({ event: 'database_connection_failed', err: error }, 'Failed to connect to MongoDB');
     throw error;
   }
 }

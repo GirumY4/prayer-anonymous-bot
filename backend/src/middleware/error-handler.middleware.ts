@@ -1,11 +1,28 @@
 import type { ErrorRequestHandler } from 'express';
 import { logger } from '../shared/logging/logger.js';
+import { ApplicationError } from '../shared/errors/application-error.js';
 
 type HttpError = Error & {
   status?: unknown;
 };
 
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
+  if (err instanceof ApplicationError) {
+    logger.warn(
+      {
+        event: 'application_error',
+        code: err.code,
+        method: req.method,
+      },
+      err.message,
+    );
+
+    res.status(err.statusCode).json({
+      error: err.code,
+    });
+    return;
+  }
+
   const error = err as HttpError;
 
   const statusCode =

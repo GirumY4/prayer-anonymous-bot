@@ -5,6 +5,7 @@ export interface DispatchRepository {
   getByWeekKey(weekKey: string): Promise<DispatchRecord | null>;
   claim(dispatchId: string, startedAt?: Date): Promise<boolean>;
   claimDispatch(dispatchId: string, startedAt?: Date): Promise<boolean>;
+  claimRunning(dispatchId: string): Promise<boolean>;
   updateStatus(
     dispatchId: string,
     status: DispatchStatus,

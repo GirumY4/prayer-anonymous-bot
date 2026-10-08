@@ -36,6 +36,15 @@ export class MongoDispatchRepository implements DispatchRepository {
     await DispatchRecordModel.updateOne({ dispatchId }, { $set: { status, ...updates } }).exec();
   }
 
+  async claimRunning(dispatchId: string): Promise<boolean> {
+    const result = await DispatchRecordModel.updateOne(
+      { dispatchId, status: 'scheduled' }, // Only claim if currently scheduled
+      { $set: { status: 'running', startedAt: new Date() } },
+    ).exec();
+
+    return result.modifiedCount === 1;
+  }
+
   private mapToDomain(doc: DispatchRecordDocument): DispatchRecord {
     return {
       id: doc._id.toString(),

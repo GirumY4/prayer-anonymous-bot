@@ -10,7 +10,7 @@ export const enMessages: Record<TranslationKey, string> = {
   // Privacy
   'privacy.title': '🔒 Privacy Notice',
   'privacy.notice':
-    'This bot allows you to submit prayer requests anonymously to the Pray Team. The application does not store your Telegram identity with your prayer request. Please do not include your name, phone number, or identifying details in your prayer. This is not an emergency service.',
+    'This bot allows you to submit prayer requests anonymously to the Pray Team. The Bot does not store your Telegram identity with your prayer request. Please do not include your name, phone number, or identifying details in your prayer.\n\nThis is not an emergency response service. This means that your submitted prayer topic, without your identity being disclosed, will be shared with members of the Prayer Team on the designated day of the week.',
   'privacy.acknowledge': '✅ I Understand',
   'privacy.details': '🔒 Privacy Details',
 

@@ -1,6 +1,12 @@
 export type DispatchStatus =
   'scheduled' | 'running' | 'completed' | 'skipped_no_requests' | 'failed';
 
+export interface SentDispatchChunk {
+  telegramMessageId: number;
+  requestIds: string[];
+  sentAt: Date;
+}
+
 export interface DispatchRecord {
   id: string;
   dispatchId: string;
@@ -12,4 +18,5 @@ export interface DispatchRecord {
   eligibleRequestCount: number;
   startedAt: Date | null;
   completedAt: Date | null;
+  sentChunks: SentDispatchChunk[];
 }

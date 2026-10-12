@@ -17,7 +17,7 @@ const prayerRequestSchema = new Schema(
       index: true,
     },
     createdAt: { type: Date, required: true, default: Date.now, index: true },
-    expiresAt: { type: Date, required: true, index: true },
+    expiresAt: { type: Date, required: true },
     dispatchId: { type: String, default: null },
     publishedAt: { type: Date, default: null },
   },

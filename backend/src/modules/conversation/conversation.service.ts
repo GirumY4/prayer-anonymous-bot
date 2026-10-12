@@ -74,14 +74,30 @@ export class DefaultConversationService implements ConversationService {
       case ConversationState.LANGUAGE_SELECTION:
         if (action.type === 'SELECT_LANGUAGE') {
           nextState.language = action.language;
-          nextState.state = ConversationState.PRIVACY_NOTICE;
+          if (session.previousState === ConversationState.WAITING_FOR_PRAYER) {
+            nextState.state = ConversationState.WAITING_FOR_PRAYER;
+          } else if (
+            session.previousState === ConversationState.MAIN_MENU ||
+            session.privacyAcknowledged
+          ) {
+            nextState.state = ConversationState.MAIN_MENU;
+          } else {
+            nextState.state = ConversationState.PRIVACY_NOTICE;
+          }
+          delete nextState.previousState;
         }
         break;
 
       case ConversationState.PRIVACY_NOTICE:
         if (action.type === 'ACKNOWLEDGE_PRIVACY') {
+          nextState.privacyAcknowledged = true;
           nextState.state = ConversationState.MAIN_MENU;
+        } else if (action.type === 'SELECT_LANGUAGE') {
+          // Language may still be corrected while the notice is displayed,
+          // but the notice itself must never be skipped.
+          nextState.language = action.language;
         } else if (action.type === 'SHOW_PRIVACY_DETAILS') {
+          nextState.previousState = ConversationState.PRIVACY_NOTICE;
           nextState.state = ConversationState.PRIVACY_DETAILS;
         }
         break;
@@ -90,18 +106,51 @@ export class DefaultConversationService implements ConversationService {
         if (action.type === 'START_SUBMISSION') {
           nextState.state = ConversationState.WAITING_FOR_PRAYER;
         } else if (action.type === 'CHANGE_LANGUAGE') {
+          nextState.previousState = ConversationState.MAIN_MENU;
           nextState.state = ConversationState.LANGUAGE_SELECTION;
         } else if (action.type === 'SHOW_PRIVACY_DETAILS') {
+          nextState.previousState = ConversationState.MAIN_MENU;
           nextState.state = ConversationState.PRIVACY_DETAILS;
         } else if (action.type === 'SHOW_HELP') {
+          nextState.previousState = ConversationState.MAIN_MENU;
           nextState.state = ConversationState.HELP;
         }
         break;
 
       case ConversationState.PRIVACY_DETAILS:
+        if (
+          action.type === 'NAV_BACK' ||
+          action.type === 'SHOW_MAIN_MENU' ||
+          action.type === 'CANCEL'
+        ) {
+          if (session.previousState === ConversationState.PRIVACY_NOTICE) {
+            nextState.state = ConversationState.PRIVACY_NOTICE;
+          } else if (session.previousState === ConversationState.LANGUAGE_SELECTION) {
+            // Returning from onboarding must not skip the language/privacy flow
+            nextState.state = ConversationState.LANGUAGE_SELECTION;
+          } else {
+            nextState.state = ConversationState.MAIN_MENU;
+          }
+          delete nextState.previousState;
+        } else if (action.type === 'CHANGE_LANGUAGE') {
+          nextState.previousState = ConversationState.PRIVACY_DETAILS;
+          nextState.state = ConversationState.LANGUAGE_SELECTION;
+        }
+        break;
+
       case ConversationState.HELP:
-        if (action.type === 'SHOW_MAIN_MENU' || action.type === 'CANCEL') {
-          nextState.state = ConversationState.MAIN_MENU;
+        if (
+          action.type === 'NAV_BACK' ||
+          action.type === 'SHOW_MAIN_MENU' ||
+          action.type === 'CANCEL'
+        ) {
+          // Return to the screen help was opened from so onboarding and drafts
+          // are never lost, falling back to the main menu.
+          nextState.state = session.previousState ?? ConversationState.MAIN_MENU;
+          delete nextState.previousState;
+        } else if (action.type === 'CHANGE_LANGUAGE') {
+          nextState.previousState = ConversationState.HELP;
+          nextState.state = ConversationState.LANGUAGE_SELECTION;
         }
         break;
 
@@ -112,6 +161,9 @@ export class DefaultConversationService implements ConversationService {
         } else if (action.type === 'CANCEL') {
           delete nextState.draftText;
           nextState.state = ConversationState.MAIN_MENU;
+        } else if (action.type === 'CHANGE_LANGUAGE') {
+          nextState.previousState = ConversationState.WAITING_FOR_PRAYER;
+          nextState.state = ConversationState.LANGUAGE_SELECTION;
         }
         break;
 
@@ -119,7 +171,6 @@ export class DefaultConversationService implements ConversationService {
         if (action.type === 'CONFIRM_SUBMISSION') {
           nextState.state = ConversationState.SUBMISSION_PROCESSING;
         } else if (action.type === 'EDIT_DRAFT') {
-          delete nextState.draftText;
           nextState.state = ConversationState.WAITING_FOR_PRAYER;
         } else if (action.type === 'CANCEL') {
           delete nextState.draftText;
@@ -131,6 +182,8 @@ export class DefaultConversationService implements ConversationService {
         if (action.type === 'COMPLETE_SUBMISSION' || action.type === 'CANCEL') {
           delete nextState.draftText;
           nextState.state = ConversationState.MAIN_MENU;
+        } else if (action.type === 'EDIT_DRAFT') {
+          nextState.state = ConversationState.REVIEWING_REQUEST;
         }
         break;
     }
@@ -147,6 +200,19 @@ export class DefaultConversationService implements ConversationService {
       } else {
         nextState.state = ConversationState.MAIN_MENU;
       }
+    }
+
+    // Global Override: informational commands must work from every state,
+    // including onboarding, where they used to be silently ignored.
+    if (action.type === 'SHOW_HELP' && session.state !== ConversationState.HELP) {
+      nextState.previousState = session.state;
+      nextState.state = ConversationState.HELP;
+    } else if (
+      action.type === 'SHOW_PRIVACY_DETAILS' &&
+      session.state !== ConversationState.PRIVACY_DETAILS
+    ) {
+      nextState.previousState = session.state;
+      nextState.state = ConversationState.PRIVACY_DETAILS;
     }
 
     return nextState;

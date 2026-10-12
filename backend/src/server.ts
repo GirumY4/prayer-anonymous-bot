@@ -18,16 +18,26 @@ import { PrayerRequestService } from './modules/prayer-requests/prayer-request.s
 import { GrammyBotClient } from './infrastructure/telegram/grammy-bot.client.js';
 import { MongoDispatchRepository } from './infrastructure/database/repositories/mongo-dispatch.repository.js';
 
-// Phase 8 Additions
+// Phase 8 Imports
 import { SecureRequestRandomizer } from './modules/dispatch/request-randomizer.js';
-import { StandardDigestBuilder } from './modules/dispatch/digest-builder.js';
-import { TelegramMessageSplitter } from './modules/dispatch/message-splitter.js';
+import { StandardDigestChunker } from './modules/dispatch/digest-chunker.js';
 import { WeeklyDispatchService } from './modules/dispatch/weekly-dispatch.service.js';
-import { NodeCronScheduler } from './infrastructure/scheduler/scheduler.js';
 
-const app = createApp();
+// Phase 9 Additions
+import { ExpirationCleanupService } from './modules/prayer-requests/expiration.service.js';
+import { ApplicationScheduler } from './infrastructure/scheduler/scheduler.js';
+import { PrayerRequestValidator } from './modules/prayer-requests/prayer-request.validation.js';
+
+import {
+  deleteTelegramWebhookForPolling,
+  registerTelegramWebhook,
+} from './infrastructure/telegram/telegram-webhook.registrar.js';
+import { ApplicationError } from './shared/errors/application-error.js';
+import { ErrorCode } from './shared/errors/error-codes.js';
 
 async function startServer(): Promise<void> {
+  let isPolling = false;
+
   try {
     await connectDatabase(env.MONGODB_URI);
 
@@ -36,7 +46,7 @@ async function startServer(): Promise<void> {
     const sessionStore = new InMemorySessionStore();
     const conversationService = new DefaultConversationService(
       sessionStore,
-      15,
+      env.SESSION_TTL_MINUTES,
       i18n.getDefaultLanguage(),
     );
     const keyboards = new TelegramKeyboards(i18n);
@@ -46,6 +56,7 @@ async function startServer(): Promise<void> {
     const encryptionService = new AesGcmEncryptionService(encryptionKeyBuffer);
     const prayerRequestRepository = new MongoPrayerRequestRepository();
     const dispatchRepository = new MongoDispatchRepository();
+    const prayerRequestValidator = new PrayerRequestValidator(env.MAX_PRAYER_REQUEST_LENGTH);
 
     const prayerRequestService = new PrayerRequestService(
       prayerRequestRepository,
@@ -57,21 +68,29 @@ async function startServer(): Promise<void> {
 
     // 3. Initialize Telegram Bot & Adapter
     const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
+
+    bot.catch((err) => {
+      logger.error(
+        { event: 'telegram_bot_error', err: err.error },
+        'Error occurred in Telegram bot handler',
+      );
+    });
+
     const telegramMessenger = new GrammyBotClient(bot);
     const telegramAdapter = new TelegramAdapter(
       conversationService,
       i18n,
       keyboards,
       prayerRequestService,
+      prayerRequestValidator,
     );
 
     bot.on('message', async (ctx) => telegramAdapter.handleUpdate(ctx));
     bot.on('callback_query', async (ctx) => telegramAdapter.handleUpdate(ctx));
 
-    // 4. Initialize Phase 8 Dispatch Pipeline
+    // 4. Initialize Dispatch Pipeline
     const randomizer = new SecureRequestRandomizer();
-    const digestBuilder = new StandardDigestBuilder();
-    const messageSplitter = new TelegramMessageSplitter();
+    const digestChunker = new StandardDigestChunker();
 
     const weeklyDispatchService = new WeeklyDispatchService(
       dispatchRepository,
@@ -79,32 +98,130 @@ async function startServer(): Promise<void> {
       encryptionService,
       telegramMessenger,
       randomizer,
-      digestBuilder,
-      messageSplitter,
+      digestChunker,
       env.TIMEZONE,
+      env.DISPATCH_STALE_MINUTES,
+      4096,
     );
 
-    const scheduler = new NodeCronScheduler(
+    // 5. Initialize Retention Cleanup
+    const expirationService = new ExpirationCleanupService(prayerRequestRepository);
+
+    // 6. Initialize Multi-Job Scheduler
+    const scheduler = new ApplicationScheduler(
       weeklyDispatchService,
-      env.WEEKLY_DISPATCH_CRON,
-      env.TIMEZONE,
+      expirationService,
+      {
+        weeklyDispatchCron: env.WEEKLY_DISPATCH_CRON,
+        retentionCleanupCron: env.RETENTION_CLEANUP_CRON,
+        sessionCleanupCron: env.SESSION_CLEANUP_CRON,
+        timezone: env.TIMEZONE,
+      },
+      sessionStore,
     );
 
-    // 5. Mount Routes & Start Services
-    app.use('/webhooks', createTelegramRouter(bot));
+    // 7. Mount Routes & Create HTTP App
+    const telegramRouter = createTelegramRouter(bot);
+    const app = createApp({ telegramRouter });
+
+    // 8. Configure Telegram update delivery
+    const shouldUsePolling = env.NODE_ENV === 'development' && !env.TELEGRAM_REGISTER_WEBHOOK;
+
+    if (shouldUsePolling) {
+      try {
+        await deleteTelegramWebhookForPolling(bot);
+        isPolling = true;
+
+        void bot
+          .start({
+            onStart: (botInfo) => {
+              logger.info(
+                {
+                  event: 'long_polling_started',
+                  username: botInfo.username,
+                },
+                'Bot started in long polling mode for local development',
+              );
+            },
+          })
+          .catch((err) => {
+            logger.error(
+              {
+                event: 'long_polling_error',
+                err,
+              },
+              'Long polling error encountered',
+            );
+          });
+      } catch (err) {
+        logger.error(
+          {
+            event: 'delete_webhook_failed',
+            err,
+          },
+          'Failed to clear active webhook prior to development polling',
+        );
+        throw new ApplicationError(
+          ErrorCode.TELEGRAM_WEBHOOK_REGISTRATION_FAILED,
+          'Failed to configure Telegram polling mode',
+          500,
+        );
+      }
+    } else if (env.TELEGRAM_REGISTER_WEBHOOK) {
+      if (!env.PUBLIC_BASE_URL) {
+        throw new ApplicationError(
+          ErrorCode.TELEGRAM_WEBHOOK_REGISTRATION_FAILED,
+          'PUBLIC_BASE_URL is required when TELEGRAM_REGISTER_WEBHOOK is enabled',
+          500,
+        );
+      }
+
+      try {
+        await registerTelegramWebhook(bot, {
+          baseUrl: env.PUBLIC_BASE_URL,
+          pathSecret: env.TELEGRAM_WEBHOOK_PATH_SECRET,
+          webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
+        });
+      } catch (err) {
+        logger.error(
+          {
+            event: 'telegram_webhook_registration_failed',
+            err,
+          },
+          'Failed to register Telegram webhook',
+        );
+
+        throw new ApplicationError(
+          ErrorCode.TELEGRAM_WEBHOOK_REGISTRATION_FAILED,
+          'Failed to register Telegram webhook',
+          500,
+        );
+      }
+    } else {
+      const message =
+        'Telegram webhook is not registered automatically. Configure it externally before production traffic is accepted.';
+
+      // In production this is fatal to the bot's function (it receives no
+      // updates at all), so it must not be buried as a warning.
+      if (env.NODE_ENV === 'production') {
+        logger.error({ event: 'telegram_webhook_not_registered' }, message);
+      } else {
+        logger.warn({ event: 'telegram_webhook_not_registered' }, message);
+      }
+    }
 
     const server: Server = app.listen(env.PORT, () => {
       logger.info({ event: 'http_server_started', port: env.PORT }, 'HTTP server started');
     });
 
-    // Start the background scheduler
+    // Start background scheduler
     scheduler.start();
 
-    // 6. Graceful Shutdown
+    // 9. Graceful Shutdown
     const shutdown = async (signal: string): Promise<void> => {
       logger.info({ event: 'shutdown_started', signal }, 'Shutdown initiated');
 
-      // Stop accepting new cron triggers
+      // Stop all scheduled jobs
       scheduler.stop();
 
       server.close(async (error) => {
@@ -112,7 +229,9 @@ async function startServer(): Promise<void> {
         else logger.info({ event: 'http_shutdown_completed' }, 'HTTP server closed');
 
         try {
-          await bot.stop();
+          if (isPolling) {
+            await bot.stop();
+          }
           await disconnectDatabase();
           logger.info({ event: 'shutdown_completed' }, 'Shutdown completed successfully');
           process.exit(error ? 1 : 0);

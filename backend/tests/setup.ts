@@ -1,0 +1,16 @@
+process.env.NODE_ENV = 'test';
+process.env.PORT = '3000';
+process.env.LOG_LEVEL = 'fatal';
+process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017/prayer_test_db';
+process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+process.env.ENCRYPTION_KEY_VERSION = '1';
+process.env.TELEGRAM_BOT_TOKEN = '123456789:ABCdefGHIjklMNOpqrsTUVwxyz';
+process.env.TELEGRAM_WEBHOOK_SECRET = 'test_webhook_secret_123456789';
+process.env.TELEGRAM_WEBHOOK_PATH_SECRET = 'test_webhook_path_secret_12345';
+process.env.PRAY_TEAM_CHAT_ID = '-1001234567890';
+process.env.WEEKLY_DISPATCH_CRON = '0 18 * * 5';
+process.env.RETENTION_CLEANUP_CRON = '0 * * * *';
+process.env.TIMEZONE = 'Africa/Addis_Ababa';
+process.env.SESSION_TTL_MINUTES = '15';
+process.env.MAX_PRAYER_REQUEST_LENGTH = '3000';
+process.env.REQUEST_RETENTION_DAYS = '14';

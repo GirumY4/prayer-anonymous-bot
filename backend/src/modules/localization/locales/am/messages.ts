@@ -57,4 +57,7 @@ export const amMessages: Record<TranslationKey, string> = {
   // Cancellation & Commands
   'cancellation.success': '❌ የአሁኑ የጸሎት ጉዳይ ረቂቅዎ ተሰርዟል። ምንም የጸሎት ጉዳይ አልተላከም።',
   'command.unknown': 'ይህን ትዕዛዝ አላውቀውም። ያሉትን አማራጮች ለማየት /help ይጠቀሙ።',
+
+  // Navigation
+  'nav.back': '🔙 ተመለስ',
 };

@@ -6,6 +6,8 @@ export interface ConversationSession {
   state: ConversationStateType;
   language: SupportedLanguage;
   draftText?: string;
+  previousState?: ConversationStateType;
+  privacyAcknowledged?: boolean;
   expiresAt: Date;
 }
 
@@ -15,6 +17,7 @@ export type ConversationAction =
   | { type: 'ACKNOWLEDGE_PRIVACY' }
   | { type: 'SHOW_MAIN_MENU' }
   | { type: 'SHOW_PRIVACY_DETAILS' }
+  | { type: 'NAV_BACK' }
   | { type: 'SHOW_HELP' }
   | { type: 'START_SUBMISSION' }
   | { type: 'SUBMIT_DRAFT_TEXT'; text: string }

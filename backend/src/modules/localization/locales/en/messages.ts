@@ -61,4 +61,7 @@ export const enMessages: Record<TranslationKey, string> = {
   'cancellation.success':
     '❌ Your current prayer-request draft was cancelled. No prayer request was submitted.',
   'command.unknown': "I don't recognize that command. Use /help to see available options.",
+
+  // Navigation
+  'nav.back': '🔙 Back',
 };

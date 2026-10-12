@@ -46,4 +46,11 @@ export class TelegramKeyboards {
       'review:cancel',
     );
   }
+
+  backAction(lang: SupportedLanguage) {
+    return new InlineKeyboard().text(
+      this.i18n.translate(TranslationKey.NAV_BACK, lang),
+      'nav:back',
+    );
+  }
 }

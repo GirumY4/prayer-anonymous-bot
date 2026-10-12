@@ -1,8 +1,10 @@
-import { DispatchRecordModel } from '../models/dispatch.model.js';
-import type { DispatchRecord, DispatchStatus } from '../../../modules/dispatch/dispatch.types.js';
+import { DispatchRecordModel, type DispatchRecordDocument } from '../models/dispatch.model.js';
+import type {
+  DispatchRecord,
+  DispatchStatus,
+  SentDispatchChunk,
+} from '../../../modules/dispatch/dispatch.types.js';
 import type { DispatchRepository } from '../../../modules/dispatch/dispatch.repository.js';
-
-export type DispatchRecordDocument = InstanceType<typeof DispatchRecordModel>;
 
 export class MongoDispatchRepository implements DispatchRepository {
   async create(dispatch: Omit<DispatchRecord, 'id'>): Promise<DispatchRecord> {
@@ -15,17 +17,48 @@ export class MongoDispatchRepository implements DispatchRepository {
     return doc ? this.mapToDomain(doc) : null;
   }
 
-  async claim(dispatchId: string, startedAt: Date = new Date()): Promise<boolean> {
+  async claimRunning(dispatchId: string, staleBefore: Date): Promise<boolean> {
     const result = await DispatchRecordModel.updateOne(
-      { dispatchId, status: 'scheduled' },
-      { $set: { status: 'running', startedAt } },
+      {
+        dispatchId,
+        $or: [
+          {
+            status: {
+              $in: ['scheduled', 'failed'],
+            },
+          },
+          {
+            status: 'running',
+            startedAt: {
+              $lt: staleBefore,
+            },
+          },
+        ],
+      },
+      {
+        $set: {
+          status: 'running',
+          startedAt: new Date(),
+        },
+      },
     ).exec();
 
-    return result.modifiedCount > 0;
+    return result.modifiedCount === 1;
   }
 
-  async claimDispatch(dispatchId: string, startedAt: Date = new Date()): Promise<boolean> {
-    return this.claim(dispatchId, startedAt);
+  async recordSentChunk(dispatchId: string, chunk: SentDispatchChunk): Promise<void> {
+    await DispatchRecordModel.updateOne(
+      { dispatchId },
+      {
+        $push: {
+          sentChunks: {
+            telegramMessageId: chunk.telegramMessageId,
+            requestIds: chunk.requestIds,
+            sentAt: chunk.sentAt,
+          },
+        },
+      },
+    ).exec();
   }
 
   async updateStatus(
@@ -33,16 +66,15 @@ export class MongoDispatchRepository implements DispatchRepository {
     status: DispatchStatus,
     updates?: Partial<Pick<DispatchRecord, 'eligibleRequestCount' | 'startedAt' | 'completedAt'>>,
   ): Promise<void> {
-    await DispatchRecordModel.updateOne({ dispatchId }, { $set: { status, ...updates } }).exec();
-  }
-
-  async claimRunning(dispatchId: string): Promise<boolean> {
-    const result = await DispatchRecordModel.updateOne(
-      { dispatchId, status: 'scheduled' }, // Only claim if currently scheduled
-      { $set: { status: 'running', startedAt: new Date() } },
+    await DispatchRecordModel.updateOne(
+      { dispatchId },
+      {
+        $set: {
+          status,
+          ...updates,
+        },
+      },
     ).exec();
-
-    return result.modifiedCount === 1;
   }
 
   private mapToDomain(doc: DispatchRecordDocument): DispatchRecord {
@@ -53,10 +85,15 @@ export class MongoDispatchRepository implements DispatchRepository {
       collectionStartAt: doc.collectionStartAt,
       collectionEndAt: doc.collectionEndAt,
       scheduledAt: doc.scheduledAt,
-      status: doc.status as DispatchStatus,
+      status: doc.status,
       eligibleRequestCount: doc.eligibleRequestCount,
       startedAt: doc.startedAt ?? null,
       completedAt: doc.completedAt ?? null,
+      sentChunks: doc.sentChunks.map((chunk) => ({
+        telegramMessageId: chunk.telegramMessageId,
+        requestIds: [...chunk.requestIds],
+        sentAt: chunk.sentAt,
+      })),
     };
   }
 }

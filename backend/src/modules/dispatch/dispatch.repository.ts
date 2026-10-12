@@ -1,11 +1,14 @@
-import type { DispatchRecord, DispatchStatus } from './dispatch.types.js';
+import type { DispatchRecord, DispatchStatus, SentDispatchChunk } from './dispatch.types.js';
 
 export interface DispatchRepository {
   create(dispatch: Omit<DispatchRecord, 'id'>): Promise<DispatchRecord>;
+
   getByWeekKey(weekKey: string): Promise<DispatchRecord | null>;
-  claim(dispatchId: string, startedAt?: Date): Promise<boolean>;
-  claimDispatch(dispatchId: string, startedAt?: Date): Promise<boolean>;
-  claimRunning(dispatchId: string): Promise<boolean>;
+
+  claimRunning(dispatchId: string, staleBefore: Date): Promise<boolean>;
+
+  recordSentChunk(dispatchId: string, chunk: SentDispatchChunk): Promise<void>;
+
   updateStatus(
     dispatchId: string,
     status: DispatchStatus,

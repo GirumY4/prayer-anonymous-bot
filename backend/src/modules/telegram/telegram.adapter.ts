@@ -9,16 +9,25 @@ import type {
 import { ConversationState } from '../conversation/conversation.state.js';
 import { TelegramKeyboards } from './keyboards.js';
 import type { PrayerRequestService } from '../prayer-requests/prayer-request.service.js';
+import { PrayerRequestValidator } from '../prayer-requests/prayer-request.validation.js';
 import { ApplicationError } from '../../shared/errors/application-error.js';
 import { ErrorCode } from '../../shared/errors/error-codes.js';
 import { logger } from '../../shared/logging/logger.js';
 
 export class TelegramAdapter {
+  /**
+   * Chats with a submission currently in flight. JavaScript's single-threaded
+   * execution makes the check-and-set below atomic, which is what closes the
+   * gap between reading the session state and locking it.
+   */
+  private readonly submissionsInProgress = new Set<string>();
+
   constructor(
     private readonly conversationService: ConversationService,
     private readonly i18n: LocalizationService,
     private readonly keyboards: TelegramKeyboards,
-    private readonly prayerRequestService: PrayerRequestService, // Phase 7 Addition
+    private readonly prayerRequestService: PrayerRequestService,
+    private readonly validator: PrayerRequestValidator,
   ) {}
 
   async handleUpdate(ctx: Context): Promise<void> {
@@ -32,13 +41,25 @@ export class TelegramAdapter {
     // 1. Handle Callback Queries (Inline Buttons)
     if (ctx.callbackQuery?.data) {
       const data = ctx.callbackQuery.data;
+
       if (data === 'lang:am') action = { type: 'SELECT_LANGUAGE', language: 'am' };
       else if (data === 'lang:en') action = { type: 'SELECT_LANGUAGE', language: 'en' };
       else if (data === 'privacy:ack') action = { type: 'ACKNOWLEDGE_PRIVACY' };
       else if (data === 'privacy:details') action = { type: 'SHOW_PRIVACY_DETAILS' };
+      else if (data === 'nav:back') action = { type: 'NAV_BACK' };
       else if (data === 'review:submit') action = { type: 'CONFIRM_SUBMISSION' };
       else if (data === 'review:edit') action = { type: 'EDIT_DRAFT' };
       else if (data === 'review:cancel') action = { type: 'CANCEL' };
+      else {
+        logger.warn(
+          { event: 'telegram_unknown_callback_data' },
+          'Received unrecognized callback data',
+        );
+        await ctx.answerCallbackQuery({
+          text: this.i18n.translate(TranslationKey.ERROR_INVALID_CALLBACK, lang),
+        });
+        return;
+      }
 
       await ctx.answerCallbackQuery();
     }
@@ -52,10 +73,26 @@ export class TelegramAdapter {
       else if (text.startsWith('/help')) action = { type: 'SHOW_HELP' };
       else if (text.startsWith('/privacy')) action = { type: 'SHOW_PRIVACY_DETAILS' };
       else if (text.startsWith('/language')) action = { type: 'CHANGE_LANGUAGE' };
-      else {
+      else if (text.startsWith('/')) {
+        await ctx.reply(this.i18n.translate(TranslationKey.COMMAND_UNKNOWN, lang));
+        return;
+      } else {
         // Context-aware text handling
         if (session?.state === ConversationState.WAITING_FOR_PRAYER) {
-          action = { type: 'SUBMIT_DRAFT_TEXT', text };
+          // Validate text immediately upon receipt
+          const validation = this.validator.validate(text);
+          if (!validation.valid) {
+            const errorKey =
+              validation.reason === 'EMPTY'
+                ? TranslationKey.ERROR_EMPTY_REQUEST
+                : TranslationKey.ERROR_TOO_LONG;
+            await ctx.reply(this.i18n.translate(errorKey, lang), {
+              reply_markup: this.keyboards.cancelAction(lang),
+            });
+            return;
+          }
+
+          action = { type: 'SUBMIT_DRAFT_TEXT', text: text.trim() };
         } else if (session?.state === ConversationState.MAIN_MENU) {
           const submitText = this.i18n.translate(TranslationKey.MENU_SUBMIT, lang);
           const langText = this.i18n.translate(TranslationKey.MENU_CHANGE_LANGUAGE, lang);
@@ -67,31 +104,68 @@ export class TelegramAdapter {
           else if (text === privacyText) action = { type: 'SHOW_PRIVACY_DETAILS' };
           else if (text === helpText) action = { type: 'SHOW_HELP' };
           else action = { type: 'SHOW_MAIN_MENU' }; // Unknown text in menu
+        } else if (session?.state === ConversationState.REVIEWING_REQUEST) {
+          // In review state, remind user to use review buttons
+          await ctx.reply(this.i18n.translate(TranslationKey.REVIEW_WARNING, lang), {
+            reply_markup: this.keyboards.reviewRequest(lang),
+          });
+          return;
         }
       }
     }
     // 3. Handle Unsupported Media
     else {
       if (session?.state === ConversationState.WAITING_FOR_PRAYER) {
-        await ctx.reply(this.i18n.translate(TranslationKey.ERROR_UNSUPPORTED_MEDIA, lang));
+        await ctx.reply(this.i18n.translate(TranslationKey.ERROR_UNSUPPORTED_MEDIA, lang), {
+          reply_markup: this.keyboards.cancelAction(lang),
+        });
       }
       return;
     }
 
     if (!action) return;
 
-    // --- Phase 7: Intercept Submission Processing ---
+    // --- Submission Processing with Duplicate Click Prevention ---
     if (action.type === 'CONFIRM_SUBMISSION') {
-      const draft = await this.conversationService.getDraft(chatId);
-
-      if (!draft) {
-        await ctx.reply(this.i18n.translate(TranslationKey.ERROR_SESSION_EXPIRED, lang));
-        await this.conversationService.handleAction(chatId, { type: 'CANCEL' });
+      // Guard 1: Prevent duplicate submission if already processing
+      if (session?.state === ConversationState.SUBMISSION_PROCESSING) {
+        logger.info(
+          { event: 'duplicate_submission_attempt_ignored' },
+          'Duplicate submission click ignored',
+        );
         return;
       }
 
+      // Guard 2: Require valid review state
+      if (session?.state !== ConversationState.REVIEWING_REQUEST) {
+        await ctx.reply(this.i18n.translate(TranslationKey.ERROR_INVALID_CALLBACK, lang));
+        return;
+      }
+
+      // Guard 3: Reject concurrent duplicate clicks within this process
+      if (this.submissionsInProgress.has(chatId)) {
+        logger.info(
+          { event: 'duplicate_submission_attempt_ignored' },
+          'Duplicate submission click ignored',
+        );
+        return;
+      }
+
+      this.submissionsInProgress.add(chatId);
+
       try {
-        // Execute the core business use case
+        const draft = await this.conversationService.getDraft(chatId);
+
+        if (!draft) {
+          await ctx.reply(this.i18n.translate(TranslationKey.ERROR_SESSION_EXPIRED, lang));
+          await this.conversationService.handleAction(chatId, { type: 'CANCEL' });
+          return;
+        }
+
+        // Lock state to processing immediately to block rapid repeat clicks
+        await this.conversationService.handleAction(chatId, { type: 'CONFIRM_SUBMISSION' });
+
+        // Execute the core business use case (validation + encryption + persistence)
         const result = await this.prayerRequestService.submit(draft);
 
         // Transition state to clear draft and return to menu
@@ -109,12 +183,11 @@ export class TelegramAdapter {
         await ctx.reply(mainMenuMsg, {
           reply_markup: this.keyboards.mainMenu(lang),
         });
-        return; // Stop further processing
+        return;
       } catch (error) {
         if (error instanceof ApplicationError) {
           let errorKey = TranslationKey.ERROR_GENERAL;
           if (error.code === ErrorCode.INVALID_INPUT) {
-            // Map specific validation reasons if needed, defaulting to general for safety
             errorKey = TranslationKey.ERROR_GENERAL;
           }
           await ctx.reply(this.i18n.translate(errorKey, lang));
@@ -126,14 +199,25 @@ export class TelegramAdapter {
           await ctx.reply(this.i18n.translate(TranslationKey.ERROR_GENERAL, lang));
         }
 
-        // Revert to reviewing state so they can try again or cancel
+        // Revert to reviewing state so user can retry or cancel without losing draft
         await this.conversationService.handleAction(chatId, { type: 'EDIT_DRAFT' });
         return;
+      } finally {
+        this.submissionsInProgress.delete(chatId);
       }
     }
 
+    // Cancellation Feedback
+    const hadActiveDraft =
+      Boolean(session?.draftText) || session?.state === ConversationState.WAITING_FOR_PRAYER;
+
     // Execute standard action and render resulting state
     const newSession = await this.conversationService.handleAction(chatId, action);
+
+    if (action.type === 'CANCEL' && hadActiveDraft) {
+      await ctx.reply(this.i18n.translate(TranslationKey.CANCELLATION_SUCCESS, lang));
+    }
+
     await this.renderState(ctx, newSession);
   }
 
@@ -168,7 +252,7 @@ export class TelegramAdapter {
 
       case ConversationState.PRIVACY_DETAILS:
         await ctx.reply(t(TranslationKey.PRIVACY_NOTICE), {
-          reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'nav:back' }]] },
+          reply_markup: this.keyboards.backAction(lang),
         });
         break;
 
@@ -198,8 +282,6 @@ export class TelegramAdapter {
         break;
 
       case ConversationState.SUBMISSION_PROCESSING:
-        // Placeholder for Phase 7 (Prayer Submission Logic)
-        await ctx.reply('Processing submission...');
         break;
     }
   }

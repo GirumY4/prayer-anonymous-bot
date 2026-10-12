@@ -49,6 +49,9 @@ export const TranslationKey = {
   // Cancellation & Commands
   CANCELLATION_SUCCESS: 'cancellation.success',
   COMMAND_UNKNOWN: 'command.unknown',
+
+  // Navigation
+  NAV_BACK: 'nav.back',
 } as const;
 
 export type TranslationKey = (typeof TranslationKey)[keyof typeof TranslationKey];

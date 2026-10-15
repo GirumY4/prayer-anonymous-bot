@@ -31,8 +31,7 @@ describe('TelegramAdapter', () => {
   }
 
   // Only the fields the adapter reads are provided by these helpers
-  const textMessage = (text: string): Context['message'] =>
-    ({ text }) as Context['message'];
+  const textMessage = (text: string): Context['message'] => ({ text }) as Context['message'];
 
   const photoMessage = (): Context['message'] =>
     ({ photo: [{ file_id: 'photo_id' }] }) as Context['message'];
@@ -67,7 +66,7 @@ describe('TelegramAdapter', () => {
 
       expect(ctx.reply).toHaveBeenCalledTimes(1);
       const call = vi.mocked(ctx.reply).mock.calls[0];
-      expect(call?.[0]).toContain('እንኳን ወደ ስም-አልባ የጸሎት ጥያቄ ቦት በሰላም መጡ!');
+      expect(call?.[0]).toContain('እንኳን ወደ ሚስጥራዊ የጸሎት ጥያቄ ማስቀመጫ ቦት በሰላም መጡ።');
     });
 
     it('handles /help by displaying help and safety information', async () => {
@@ -92,9 +91,7 @@ describe('TelegramAdapter', () => {
       const ctx = createMockContext({ message: textMessage('/unknown_cmd') });
       await adapter.handleUpdate(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('ይህን ትዕዛዝ አላውቀውም'),
-      );
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('ይህን ትዕዛዝ አላውቀውም'));
     });
   });
 
@@ -194,10 +191,7 @@ describe('TelegramAdapter', () => {
       const ctx = createMockContext({ message: textMessage(validText) });
       await adapter.handleUpdate(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining(validText),
-        expect.anything(),
-      );
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining(validText), expect.anything());
 
       const session = await conversationService.getSession(chatId);
       expect(session?.state).toBe(ConversationState.REVIEWING_REQUEST);
@@ -246,9 +240,7 @@ describe('TelegramAdapter', () => {
       await adapter.handleUpdate(ctx);
 
       expect(mockPrayerRequestService.submit).toHaveBeenCalledWith('Valid prayer to submit');
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('PR-TEST1234'),
-      );
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('PR-TEST1234'));
 
       const session = await conversationService.getSession(chatId);
       expect(session?.state).toBe(ConversationState.MAIN_MENU);

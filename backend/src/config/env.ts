@@ -36,7 +36,7 @@ const envSchema = z
 
     REQUEST_RETENTION_DAYS: z.coerce.number().int().positive().default(14),
 
-    WEEKLY_DISPATCH_CRON: z.string().min(1),
+    WEEKLY_DISPATCH_CRON: z.string().min(1).default('0 18 * * 0,3,5'),
     RETENTION_CLEANUP_CRON: z.string().min(1).default('0 * * * *'),
     // Sweeps expired in-memory conversation sessions (which can hold prayer drafts).
     SESSION_CLEANUP_CRON: z.string().min(1).default('*/10 * * * *'),

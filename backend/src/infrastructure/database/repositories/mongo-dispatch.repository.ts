@@ -12,9 +12,13 @@ export class MongoDispatchRepository implements DispatchRepository {
     return this.mapToDomain(doc);
   }
 
-  async getByWeekKey(weekKey: string): Promise<DispatchRecord | null> {
-    const doc = await DispatchRecordModel.findOne({ weekKey }).exec();
+  async getByOccurrenceKey(occurrenceKey: string): Promise<DispatchRecord | null> {
+    const doc = await DispatchRecordModel.findOne({ occurrenceKey }).exec();
     return doc ? this.mapToDomain(doc) : null;
+  }
+
+  async getByWeekKey(weekKey: string): Promise<DispatchRecord | null> {
+    return this.getByOccurrenceKey(weekKey);
   }
 
   async claimRunning(dispatchId: string, staleBefore: Date): Promise<boolean> {
@@ -81,7 +85,8 @@ export class MongoDispatchRepository implements DispatchRepository {
     return {
       id: doc._id.toString(),
       dispatchId: doc.dispatchId,
-      weekKey: doc.weekKey,
+      occurrenceKey: doc.occurrenceKey,
+      weekKey: doc.weekKey ?? doc.occurrenceKey,
       collectionStartAt: doc.collectionStartAt,
       collectionEndAt: doc.collectionEndAt,
       scheduledAt: doc.scheduledAt,

@@ -20,23 +20,34 @@ export class WeeklyDispatchService {
     private readonly telegramMaxLength: number = 4096,
   ) {}
 
-  async execute(): Promise<void> {
-    const now = DateTime.now().setZone(this.timezone);
-    // ISO week year must be used, not the calendar year: a dispatch that fires in
-    // an ISO week spanning two calendar years would otherwise split one week into
-    // two dispatch records (e.g. 2027-W01 vs 2026-W01).
-    const weekKey = `${now.weekYear}-W${String(now.weekNumber).padStart(2, '0')}`;
+  async execute(executionDate?: Date | DateTime): Promise<void> {
+    const now = (
+      executionDate
+        ? executionDate instanceof DateTime
+          ? executionDate
+          : DateTime.fromJSDate(executionDate)
+        : DateTime.now()
+    ).setZone(this.timezone);
 
-    logger.info({ event: 'weekly_dispatch_started', weekKey }, 'Weekly dispatch started');
+    // Use date-based occurrence key (yyyy-LL-dd) to allow multiple dispatches
+    // per ISO calendar week (e.g. Sunday, Wednesday, Friday) without collision.
+    const occurrenceKey = now.toFormat('yyyy-LL-dd');
+    const dispatchId = `DISPATCH-${occurrenceKey}`;
+
+    logger.info(
+      { event: 'weekly_dispatch_started', occurrenceKey, dispatchId },
+      'Weekly dispatch started',
+    );
 
     // 1. Create or fetch dispatch record
-    let dispatch = await this.dispatchRepo.getByWeekKey(weekKey);
+    let dispatch = await this.dispatchRepo.getByOccurrenceKey(occurrenceKey);
 
     if (!dispatch) {
       try {
         dispatch = await this.dispatchRepo.create({
-          dispatchId: `DISPATCH-${weekKey}`,
-          weekKey,
+          dispatchId,
+          occurrenceKey,
+          weekKey: occurrenceKey,
           collectionStartAt: now.minus({ days: 7 }).toJSDate(),
           collectionEndAt: now.toJSDate(),
           scheduledAt: now.toJSDate(),
@@ -47,13 +58,13 @@ export class WeeklyDispatchService {
           sentChunks: [],
         });
       } catch {
-        dispatch = await this.dispatchRepo.getByWeekKey(weekKey);
+        dispatch = await this.dispatchRepo.getByOccurrenceKey(occurrenceKey);
       }
     }
 
     if (!dispatch) {
       logger.error(
-        { event: 'weekly_dispatch_record_unavailable', weekKey },
+        { event: 'weekly_dispatch_record_unavailable', occurrenceKey, dispatchId },
         'Dispatch record could not be created or loaded',
       );
       return;
@@ -63,7 +74,8 @@ export class WeeklyDispatchService {
       logger.info(
         {
           event: 'weekly_dispatch_already_finalized',
-          weekKey,
+          occurrenceKey,
+          dispatchId: dispatch.dispatchId,
           status: dispatch.status,
         },
         'Weekly dispatch already finalized',
@@ -78,7 +90,7 @@ export class WeeklyDispatchService {
 
     if (!claimed) {
       logger.info(
-        { event: 'weekly_dispatch_claim_failed', weekKey },
+        { event: 'weekly_dispatch_claim_failed', occurrenceKey, dispatchId: dispatch.dispatchId },
         'Failed to claim running state',
       );
       return;
@@ -98,7 +110,8 @@ export class WeeklyDispatchService {
         logger.info(
           {
             event: 'weekly_dispatch_journal_reconciled',
-            weekKey,
+            occurrenceKey,
+            dispatchId: dispatch.dispatchId,
             count: journaledRequestIds.size,
           },
           'Previously journaled dispatch chunks reconciled',
@@ -108,7 +121,7 @@ export class WeeklyDispatchService {
       // 4. Find eligible requests using the original collection cutoff
       const eligibleRequests = await this.prayerRepo.findEligibleForDispatch({
         collectionEndAt: dispatch.collectionEndAt,
-        now: new Date(),
+        now: now.toJSDate(),
       });
 
       const remainingRequests = eligibleRequests.filter(
@@ -126,7 +139,8 @@ export class WeeklyDispatchService {
           logger.info(
             {
               event: 'weekly_dispatch_completed_from_journal',
-              weekKey,
+              occurrenceKey,
+              dispatchId: dispatch.dispatchId,
               count: journaledRequestIds.size,
             },
             'Weekly dispatch completed from journal without new sends',
@@ -138,7 +152,11 @@ export class WeeklyDispatchService {
           });
 
           logger.info(
-            { event: 'weekly_dispatch_skipped_no_requests', weekKey },
+            {
+              event: 'weekly_dispatch_skipped_no_requests',
+              occurrenceKey,
+              dispatchId: dispatch.dispatchId,
+            },
             'No eligible requests. Nothing sent to Pray Team group.',
           );
         }
@@ -186,7 +204,8 @@ export class WeeklyDispatchService {
         logger.info(
           {
             event: 'weekly_dispatch_chunk_sent',
-            weekKey,
+            occurrenceKey,
+            dispatchId: dispatch.dispatchId,
             requestCount: chunk.requestIds.length,
           },
           'Weekly dispatch chunk sent',
@@ -202,7 +221,8 @@ export class WeeklyDispatchService {
       logger.info(
         {
           event: 'weekly_dispatch_completed',
-          weekKey,
+          occurrenceKey,
+          dispatchId: dispatch.dispatchId,
           count: publishedRequestIds.size,
         },
         'Weekly dispatch completed',
@@ -214,12 +234,19 @@ export class WeeklyDispatchService {
         });
       } catch {
         logger.error(
-          { event: 'weekly_dispatch_status_update_failed', weekKey },
+          {
+            event: 'weekly_dispatch_status_update_failed',
+            occurrenceKey,
+            dispatchId: dispatch.dispatchId,
+          },
           'Failed to update dispatch status after error',
         );
       }
 
-      logger.error({ event: 'weekly_dispatch_failed', weekKey }, 'Weekly dispatch failed');
+      logger.error(
+        { event: 'weekly_dispatch_failed', occurrenceKey, dispatchId: dispatch.dispatchId },
+        'Weekly dispatch failed',
+      );
 
       throw error;
     }

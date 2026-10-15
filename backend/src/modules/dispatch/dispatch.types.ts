@@ -10,7 +10,8 @@ export interface SentDispatchChunk {
 export interface DispatchRecord {
   id: string;
   dispatchId: string;
-  weekKey: string;
+  occurrenceKey: string;
+  weekKey?: string;
   collectionStartAt: Date;
   collectionEndAt: Date;
   scheduledAt: Date;

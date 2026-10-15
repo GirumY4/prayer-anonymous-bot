@@ -3,7 +3,10 @@ import type { DispatchRecord, DispatchStatus, SentDispatchChunk } from './dispat
 export interface DispatchRepository {
   create(dispatch: Omit<DispatchRecord, 'id'>): Promise<DispatchRecord>;
 
-  getByWeekKey(weekKey: string): Promise<DispatchRecord | null>;
+  getByOccurrenceKey(occurrenceKey: string): Promise<DispatchRecord | null>;
+
+  /** @deprecated Use getByOccurrenceKey instead */
+  getByWeekKey?(weekKey: string): Promise<DispatchRecord | null>;
 
   claimRunning(dispatchId: string, staleBefore: Date): Promise<boolean>;
 

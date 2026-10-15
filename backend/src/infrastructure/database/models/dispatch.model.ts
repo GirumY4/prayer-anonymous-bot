@@ -35,10 +35,14 @@ const dispatchRecordSchema = new Schema<DispatchRecordAttrs>(
       required: true,
       unique: true,
     },
-    weekKey: {
+    occurrenceKey: {
       type: String,
       required: true,
       unique: true,
+    },
+    weekKey: {
+      type: String,
+      required: false,
     },
     collectionStartAt: {
       type: Date,

@@ -34,6 +34,7 @@ import {
 } from './infrastructure/telegram/telegram-webhook.registrar.js';
 import { ApplicationError } from './shared/errors/application-error.js';
 import { ErrorCode } from './shared/errors/error-codes.js';
+import { serializeSafeError } from './shared/logging/safe-error.js';
 
 async function startServer(): Promise<void> {
   let isPolling = false;
@@ -70,8 +71,12 @@ async function startServer(): Promise<void> {
     const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
 
     bot.catch((err) => {
+      // Content-free. Do not log err.error directly: it may carry the update.
       logger.error(
-        { event: 'telegram_bot_error', err: err.error },
+        {
+          event: 'telegram_bot_error',
+          ...serializeSafeError(err.error),
+        },
         'Error occurred in Telegram bot handler',
       );
     });

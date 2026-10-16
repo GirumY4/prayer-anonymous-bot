@@ -71,7 +71,6 @@ async function startServer(): Promise<void> {
     const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
 
     bot.catch((err) => {
-      // Content-free. Do not log err.error directly: it may carry the update.
       logger.error(
         {
           event: 'telegram_bot_error',
@@ -92,6 +91,24 @@ async function startServer(): Promise<void> {
 
     bot.on('message', async (ctx) => telegramAdapter.handleUpdate(ctx));
     bot.on('callback_query', async (ctx) => telegramAdapter.handleUpdate(ctx));
+
+    // IMPORTANT:
+    // grammY requires botInfo before handleUpdate() can be used.
+    // This is mandatory for webhook mode.
+    try {
+      await bot.init();
+      logger.info({ event: 'telegram_bot_initialized' }, 'Telegram bot initialized successfully');
+    } catch (err) {
+      logger.error(
+        {
+          event: 'telegram_bot_initialization_failed',
+          ...serializeSafeError(err),
+        },
+        'Failed to initialize Telegram bot',
+      );
+
+      throw err;
+    }
 
     // 4. Initialize Dispatch Pipeline
     const randomizer = new SecureRequestRandomizer();

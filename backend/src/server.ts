@@ -146,8 +146,27 @@ async function startServer(): Promise<void> {
     const telegramRouter = createTelegramRouter(bot);
     const app = createApp({ telegramRouter });
 
-    // 8. Configure Telegram update delivery
-    const shouldUsePolling = env.NODE_ENV === 'development' && !env.TELEGRAM_REGISTER_WEBHOOK;
+    // 8. Start HTTP server before registering the webhook.
+    // This prevents Telegram from sending updates before the server is ready.
+    const server: Server = await new Promise((resolve, reject) => {
+      const httpServer = app.listen(env.PORT, () => {
+        logger.info(
+          { event: 'http_server_started', port: env.PORT },
+          'HTTP server started',
+        );
+
+        resolve(httpServer);
+      });
+
+      httpServer.once('error', reject);
+    });
+
+    // 9. Start background scheduler
+    scheduler.start();
+
+    // 10. Configure Telegram update delivery
+    const shouldUsePolling =
+      env.NODE_ENV === 'development' && !env.TELEGRAM_REGISTER_WEBHOOK;
 
     if (shouldUsePolling) {
       try {
@@ -170,7 +189,7 @@ async function startServer(): Promise<void> {
             logger.error(
               {
                 event: 'long_polling_error',
-                err,
+                ...serializeSafeError(err),
               },
               'Long polling error encountered',
             );
@@ -179,15 +198,12 @@ async function startServer(): Promise<void> {
         logger.error(
           {
             event: 'delete_webhook_failed',
-            err,
+            ...serializeSafeError(err),
           },
           'Failed to clear active webhook prior to development polling',
         );
-        throw new ApplicationError(
-          ErrorCode.TELEGRAM_WEBHOOK_REGISTRATION_FAILED,
-          'Failed to configure Telegram polling mode',
-          500,
-        );
+
+        throw err;
       }
     } else if (env.TELEGRAM_REGISTER_WEBHOOK) {
       if (!env.PUBLIC_BASE_URL) {
@@ -208,38 +224,21 @@ async function startServer(): Promise<void> {
         logger.error(
           {
             event: 'telegram_webhook_registration_failed',
-            err,
+            ...serializeSafeError(err),
           },
           'Failed to register Telegram webhook',
         );
 
-        throw new ApplicationError(
-          ErrorCode.TELEGRAM_WEBHOOK_REGISTRATION_FAILED,
-          'Failed to register Telegram webhook',
-          500,
-        );
+        throw err;
       }
     } else {
-      const message =
-        'Telegram webhook is not registered automatically. Configure it externally before production traffic is accepted.';
-
-      // In production this is fatal to the bot's function (it receives no
-      // updates at all), so it must not be buried as a warning.
-      if (env.NODE_ENV === 'production') {
-        logger.error({ event: 'telegram_webhook_not_registered' }, message);
-      } else {
-        logger.warn({ event: 'telegram_webhook_not_registered' }, message);
-      }
+      logger.warn(
+        { event: 'telegram_webhook_not_registered' },
+        'Telegram webhook is not registered automatically. Configure it externally before production traffic is accepted.',
+      );
     }
 
-    const server: Server = app.listen(env.PORT, () => {
-      logger.info({ event: 'http_server_started', port: env.PORT }, 'HTTP server started');
-    });
-
-    // Start background scheduler
-    scheduler.start();
-
-    // 9. Graceful Shutdown
+    // 11. Graceful Shutdown
     const shutdown = async (signal: string): Promise<void> => {
       logger.info({ event: 'shutdown_started', signal }, 'Shutdown initiated');
 

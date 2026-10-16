@@ -65,7 +65,7 @@ export class TelegramAdapter {
     }
     // 2. Handle Text Messages
     else if (ctx.message?.text) {
-      const text = ctx.message.text;
+      const text = ctx.message.text.trim();
 
       // Commands
       if (text.startsWith('/start')) action = { type: 'START' };
@@ -77,8 +77,34 @@ export class TelegramAdapter {
         await ctx.reply(this.i18n.translate(TranslationKey.COMMAND_UNKNOWN, lang));
         return;
       } else {
-        // Context-aware text handling
-        if (session?.state === ConversationState.WAITING_FOR_PRAYER) {
+        // --- GLOBAL MENU BUTTON INTERCEPTION ---
+        // Because the ReplyKeyboard remains visible during text-input states,
+        // users will naturally tap these buttons. We intercept them globally
+        // to prevent them from being captured as prayer draft text.
+        const submitLabel = this.i18n.translate(TranslationKey.MENU_SUBMIT, lang);
+        const langLabel = this.i18n.translate(TranslationKey.MENU_CHANGE_LANGUAGE, lang);
+        const privacyLabel = this.i18n.translate(TranslationKey.MENU_PRIVACY, lang);
+        const helpLabel = this.i18n.translate(TranslationKey.MENU_HELP, lang);
+
+        let menuAction: ConversationAction | null = null;
+        if (text === submitLabel) menuAction = { type: 'START_SUBMISSION' };
+        else if (text === langLabel) menuAction = { type: 'CHANGE_LANGUAGE' };
+        else if (text === privacyLabel) menuAction = { type: 'SHOW_PRIVACY_DETAILS' };
+        else if (text === helpLabel) menuAction = { type: 'SHOW_HELP' };
+
+        if (menuAction && session?.state !== ConversationState.SUBMISSION_PROCESSING) {
+          // If they tap "Submit" while already waiting for prayer, just ignore it
+          if (
+            menuAction.type === 'START_SUBMISSION' &&
+            session?.state === ConversationState.WAITING_FOR_PRAYER
+          ) {
+            action = null;
+          } else {
+            action = menuAction;
+          }
+        }
+        // --- CONTEXT-AWARE STATE HANDLING ---
+        else if (session?.state === ConversationState.WAITING_FOR_PRAYER) {
           // Validate text immediately upon receipt
           const validation = this.validator.validate(text);
           if (!validation.valid) {
@@ -92,18 +118,10 @@ export class TelegramAdapter {
             return;
           }
 
-          action = { type: 'SUBMIT_DRAFT_TEXT', text: text.trim() };
+          action = { type: 'SUBMIT_DRAFT_TEXT', text };
         } else if (session?.state === ConversationState.MAIN_MENU) {
-          const submitText = this.i18n.translate(TranslationKey.MENU_SUBMIT, lang);
-          const langText = this.i18n.translate(TranslationKey.MENU_CHANGE_LANGUAGE, lang);
-          const privacyText = this.i18n.translate(TranslationKey.MENU_PRIVACY, lang);
-          const helpText = this.i18n.translate(TranslationKey.MENU_HELP, lang);
-
-          if (text === submitText) action = { type: 'START_SUBMISSION' };
-          else if (text === langText) action = { type: 'CHANGE_LANGUAGE' };
-          else if (text === privacyText) action = { type: 'SHOW_PRIVACY_DETAILS' };
-          else if (text === helpText) action = { type: 'SHOW_HELP' };
-          else action = { type: 'SHOW_MAIN_MENU' }; // Unknown text in menu
+          // Fallback for unknown text in main menu
+          action = { type: 'SHOW_MAIN_MENU' };
         } else if (session?.state === ConversationState.REVIEWING_REQUEST) {
           // In review state, remind user to use review buttons
           await ctx.reply(this.i18n.translate(TranslationKey.REVIEW_WARNING, lang), {

@@ -19,7 +19,7 @@ export function createApp(options?: AppOptions): Express {
 
   app.use('/health', healthRouter);
 
-  if (options.telegramRouter) {
+  if (options?.telegramRouter) {
     app.use('/webhooks', options.telegramRouter);
   }
 

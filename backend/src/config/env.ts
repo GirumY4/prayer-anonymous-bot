@@ -22,6 +22,10 @@ const envSchema = z
     TELEGRAM_WEBHOOK_SECRET: z.string().min(1).max(256),
     TELEGRAM_WEBHOOK_PATH_SECRET: z.string().min(1),
     PRAY_TEAM_CHAT_ID: z.string().min(1),
+    PROTECT_PRAY_TEAM_MESSAGES: z
+      .enum(['true', 'false'])
+      .default('true') // Defaults to true for privacy defense-in-Depth
+      .transform((value) => value === 'true'),
 
     TELEGRAM_REGISTER_WEBHOOK: booleanFromString,
     PUBLIC_BASE_URL: z.string().url().optional(),

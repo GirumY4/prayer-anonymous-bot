@@ -14,7 +14,7 @@ export class GrammyBotClient implements TelegramMessenger {
     if (destination.type === 'pray_team_group') {
       // protect_content: true prevents forwarding/saving, adding defense-in-depth
       const result = await this.bot.api.sendMessage(env.PRAY_TEAM_CHAT_ID, message.text, {
-        protect_content: true,
+        protect_content: env.PROTECT_PRAY_TEAM_MESSAGES,
       });
       return { telegramMessageId: result.message_id };
     }
